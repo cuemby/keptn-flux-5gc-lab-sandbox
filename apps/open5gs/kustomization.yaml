@@ -20,7 +20,7 @@ resources:
 configMapGenerator:
   # scripts/inject-fault.sh and scripts/heal.sh swap the file on the next line.
   - name: open5gs-values
-    files: [values.yaml=values/open5gs-good.yaml]
+    files: [values.yaml=values/open5gs-fault-slice.yaml]
   - name: ueransim-values
     files: [values.yaml=values/ueransim.yaml]
 generatorOptions:
