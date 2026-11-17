@@ -1,3 +1,6 @@
+# Fault variant of open5gs-good.yaml, selected by scripts/inject-fault.sh.
+# Identical except for the SMF's UE pool DNN (see FAULT below).
+#
 # Chart defaults from the chart's values-5g.yaml (5G SA, 4G NFs off),
 # the PLMN/slice/subscriber settings from Gradiant's open5gs + UERANSIM
 # tutorial, metrics for AMF/SMF/UPF, and light-profile resources.
@@ -60,6 +63,13 @@ smf:
   resources: *nf
   config:
     pcrf: { enabled: false }
+    # FAULT: the SMF's UE address pool serves DNN "ims", but the UEs and subscribers use
+    # "internet". NG Setup and registration still succeed (registration ratio stays high), but
+    # every PDU Session Establishment fails, so PDU session success and UPF sessions drop to zero
+    # and kpi-guard requests a rollback. (An NSSF-only slice fault does not work: the live e2e
+    # run showed the Open5GS 2.8.0 AMF selects the SMF without asking the NSSF.)
+    subnetList:
+      - { subnet: 10.45.0.0/16, gateway: 10.45.0.1, dnn: ims }
 upf:
   metrics: { enabled: true, serviceMonitor: { enabled: true } }
   resources: *nf
