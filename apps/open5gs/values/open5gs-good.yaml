@@ -76,4 +76,3 @@ pcf: { resources: *nf, mongodb: { enabled: false } }
 scp: { resources: *nf, mongodb: { enabled: false } }
 udm: { resources: *nf }
 udr: { resources: *nf }
-# live-github-check 2026-11-17T13:01:10Z: release before the scenario 9 break
