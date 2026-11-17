@@ -1,7 +1,9 @@
 # Baseline traffic: every 2 minutes, restart the UE Deployment (fresh
 # registrations and PDU sessions), then ping the UPF gateway through each UE
 # tunnel (N3 user-plane packets). keptn/task-traffic-burst.yaml runs the same
-# script inside the Keptn post-deployment phase.
+# script inside the Keptn post-deployment phase, after restarting the gNB once
+# (a release rolls the AMF; restarting the gNB here every 2 minutes would cut
+# the UEs' radio links and GTP tunnels mid-test).
 apiVersion: v1
 kind: ServiceAccount
 metadata: { name: keptn-traffic }
@@ -12,9 +14,10 @@ metadata: { name: keptn-traffic }
 rules:
   # "list" + "watch" with resourceNames are authorized when the request uses a
   # metadata.name field selector, which is what "kubectl rollout status" does.
+  # ueransim-gnb: restarted by the traffic-burst task after each release.
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    resourceNames: ["ueransim-gnb-ues"]
+    resourceNames: ["ueransim-gnb", "ueransim-gnb-ues"]
     verbs: ["get", "list", "watch", "patch"]
   - apiGroups: [""]
     resources: ["pods"]

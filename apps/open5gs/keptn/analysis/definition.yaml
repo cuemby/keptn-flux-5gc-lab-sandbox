@@ -16,9 +16,9 @@ spec:
         failure: { lessThan: { fixedValue: "0.95" } }
         warning: { lessThan: { fixedValue: "0.99" } }
       weight: 2
-    - analysisValueTemplateRef: { name: upf-n3-rate }
+    - analysisValueTemplateRef: { name: upf-sessions }
       target:
-        failure: { lessThan: { fixedValue: "0.1" } }
+        failure: { lessThan: { fixedValue: "1" } }     # UPF without PDU sessions for over half the window
       weight: 1
   totalScore:
     passPercentage: 90

@@ -17,6 +17,9 @@ webui: { enabled: false }   # optional subscriber UI; populate below seeds the U
 
 mongodb:
   enabled: true
+  # The chart's mongo:8.0.34 exits on start on Linux kernels 6.19-7.0.13 (SERVER-121912;
+  # GitHub's ubuntu-latest runners use 7.0.0-azure). MongoDB 7.0 has no such kernel gate.
+  image: { tag: 7.0.48 }
   auth: { enabled: false }
   persistence: { enabled: true, size: 1Gi }
   resources:
@@ -32,8 +35,9 @@ populate:
     - open5gs-dbctl add_ue_with_slice 999700000000002 465B5CE8B199B49FAA5F0A2EE238A6BC E8ED289DEBA952E4283B54E88E6183CA internet 1 111111
   mongodbWait:
     resources:
-      requests: { cpu: 10m, memory: 32Mi }
-      limits: { memory: 128Mi }
+      # mongosh peaks at about 205 MiB (measured); 128Mi was OOMKilled on every start.
+      requests: { cpu: 10m, memory: 64Mi }
+      limits: { memory: 320Mi }
 
 amf:
   metrics: { enabled: true, serviceMonitor: { enabled: true } }

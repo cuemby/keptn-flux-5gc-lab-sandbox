@@ -1,5 +1,6 @@
 # Open5GS 5G SA core (Gradiant chart 2.4.1, Open5GS 2.8.0).
-# AMF, SMF, NSSF and UPF are Keptn workloads of the app "open5gs".
+# AMF, SMF, NSSF and UPF are Keptn workloads of the app "open5gs", and the only pods Keptn sees:
+# its pod webhook selects the keptn.sh/workload label (platform/keptn/helmrelease.yaml).
 # keptn.sh/version comes from RELEASE_ID (Flux postBuild substitution on the
 # "apps" Kustomization), so every release bump rolls these four Deployments.
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -28,7 +29,7 @@ spec:
               - op: add
                 path: /spec/template/metadata/annotations/keptn.sh~1version
                 value: "${RELEASE_ID}"
-          - { target: { kind: Deployment, name: open5gs-amf }, patch: '[{"op":"add","path":"/spec/template/metadata/annotations/keptn.sh~1workload","value":"amf"}]' }
-          - { target: { kind: Deployment, name: open5gs-smf }, patch: '[{"op":"add","path":"/spec/template/metadata/annotations/keptn.sh~1workload","value":"smf"}]' }
-          - { target: { kind: Deployment, name: open5gs-nssf }, patch: '[{"op":"add","path":"/spec/template/metadata/annotations/keptn.sh~1workload","value":"nssf"}]' }
-          - { target: { kind: Deployment, name: open5gs-upf }, patch: '[{"op":"add","path":"/spec/template/metadata/annotations/keptn.sh~1workload","value":"upf"}]' }
+          - { target: { kind: Deployment, name: open5gs-amf }, patch: '[{"op":"add","path":"/spec/template/metadata/annotations/keptn.sh~1workload","value":"amf"},{"op":"add","path":"/spec/template/metadata/labels/keptn.sh~1workload","value":"amf"}]' }
+          - { target: { kind: Deployment, name: open5gs-smf }, patch: '[{"op":"add","path":"/spec/template/metadata/annotations/keptn.sh~1workload","value":"smf"},{"op":"add","path":"/spec/template/metadata/labels/keptn.sh~1workload","value":"smf"}]' }
+          - { target: { kind: Deployment, name: open5gs-nssf }, patch: '[{"op":"add","path":"/spec/template/metadata/annotations/keptn.sh~1workload","value":"nssf"},{"op":"add","path":"/spec/template/metadata/labels/keptn.sh~1workload","value":"nssf"}]' }
+          - { target: { kind: Deployment, name: open5gs-upf }, patch: '[{"op":"add","path":"/spec/template/metadata/annotations/keptn.sh~1workload","value":"upf"},{"op":"add","path":"/spec/template/metadata/labels/keptn.sh~1workload","value":"upf"}]' }

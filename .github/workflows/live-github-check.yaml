@@ -1,0 +1,87 @@
+name: live-github-check
+
+# Runs scripts/live-github-check.sh on a GitHub-hosted runner against this repository itself: the
+# real Keptn promote and rollback dispatches (scenario 2), mission control (scenario 9, with the
+# 15-minute degradation) and the rollback loop guard (scenario 3). The Kind e2e cannot prove these:
+# it uses a GitHub API mock.
+#
+# Only in a repository whose name ends in -sandbox, on demand: the run pushes to main (Flux
+# bootstrap, scenario and rollback commits; the starting lab tree is restored at the end) and lasts
+# about 3 hours. Copy the lab to the sandbox's main first, workflows included (the bootstrap token
+# cannot change workflow files), then add two Actions secrets to the sandbox:
+#   LIVE_BOOTSTRAP_TOKEN  fine-grained, this repository only: Administration and Contents read/write
+#   LIVE_DISPATCH_TOKEN   fine-grained, this repository only: Actions read/write
+# The tokens reach the script through a mode-600 file that the script deletes when it ends.
+on:
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: Scenarios to run, in this order
+        type: string
+        default: promote rollback mission loop-guard
+
+permissions: {}
+
+concurrency:
+  group: live-github-check
+  cancel-in-progress: false
+
+jobs:
+  live:
+    if: endsWith(github.repository, '-sandbox')
+    runs-on: ubuntu-latest   # 4 vCPU, 16 GB on public repositories
+    timeout-minutes: 330
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned toolchain (mise.toml)
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.19
+          cache: true
+
+      - name: Runner resources
+        run: |
+          echo "CPUs: $(nproc)"
+          free -m
+
+      - name: Live check
+        env:
+          BOOT: ${{ secrets.LIVE_BOOTSTRAP_TOKEN }}
+          DISPATCH: ${{ secrets.LIVE_DISPATCH_TOKEN }}
+          LIVE_SCENARIOS: ${{ inputs.scenarios }}
+          TARGET: ${{ github.repository }}
+        run: |
+          [[ -n "$BOOT" && -n "$DISPATCH" ]] ||
+            { echo "::error::set the LIVE_BOOTSTRAP_TOKEN and LIVE_DISPATCH_TOKEN Actions secrets"; exit 1; }
+          creds="$RUNNER_TEMP/creds.env"
+          (umask 077; printf 'GITHUB_TOKEN=%s\nKEPTN_DISPATCH_TOKEN=%s\n' "$BOOT" "$DISPATCH" >"$creds")
+          unset BOOT DISPATCH
+          export LIVE_DIR="$RUNNER_TEMP/kfl-live" LIVE_DIAG_DIR="$RUNNER_TEMP/kfl-live-diag"
+          scripts/live-github-check.sh --creds "$creds" "$TARGET"
+
+      - name: Results
+        if: always()
+        run: |
+          {
+            echo "## live-github-check"
+            cat "$RUNNER_TEMP/kfl-live/results.md" 2>/dev/null || echo "no results"
+          } >>"$GITHUB_STEP_SUMMARY"
+          mkdir -p "$RUNNER_TEMP/kfl-live-out"
+          cp "$RUNNER_TEMP/kfl-live/results.md" "$RUNNER_TEMP/kfl-live/memory.log" "$RUNNER_TEMP/kfl-live-out/" 2>/dev/null || true
+          [[ -d "$RUNNER_TEMP/kfl-live-diag" ]] && cp -r "$RUNNER_TEMP/kfl-live-diag" "$RUNNER_TEMP/kfl-live-out/diagnostics"
+          # The script deletes the credentials file; make sure.
+          rm -f "$RUNNER_TEMP/creds.env"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: live-github-check
+          path: ${{ runner.temp }}/kfl-live-out
+          retention-days: 14
+          if-no-files-found: warn

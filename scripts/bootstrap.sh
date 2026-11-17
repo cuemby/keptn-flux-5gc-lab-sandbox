@@ -96,7 +96,8 @@ flux bootstrap github "${bootstrap_args[@]}"
 
 # 3. Runtime Secrets. Values go through stdin so tokens never appear in process arguments.
 log "Waiting for the lab namespaces"
-kubectl wait --for=create ns/open5gs ns/observability --timeout=5m
+# One name per call: with several names, kubectl 1.37 fails at once (NotFound) instead of waiting.
+for ns in open5gs observability; do kubectl wait --for=create "ns/$ns" --timeout=5m; done
 kubectl wait --for=jsonpath='{.status.phase}'=Active ns/open5gs ns/observability --timeout=5m
 
 log "Creating Secret open5gs/github-dispatch"

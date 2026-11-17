@@ -78,7 +78,7 @@ down: ## Delete the Kind cluster
 bump: ## Bump RELEASE_ID (new Keptn app version), commit and push
 	scripts/bump-release.sh lab
 
-fault: ## Switch Open5GS to the faulty slice config, commit and push
+fault: ## Switch Open5GS to the faulty config (SMF DNN mismatch), commit and push
 	scripts/inject-fault.sh
 
 heal: ## Switch Open5GS back to the good config, commit and push

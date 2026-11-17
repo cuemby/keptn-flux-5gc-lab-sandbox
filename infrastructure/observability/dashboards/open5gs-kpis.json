@@ -6,7 +6,7 @@
     "5g",
     "keptn-flux-5gc-lab"
   ],
-  "description": "AMF registration, SMF PDU session and UPF N3 KPIs: the same signals the Keptn kpi-guard task, evaluations and alert rules use.",
+  "description": "AMF registration, SMF PDU session and UPF session KPIs: the same signals the Keptn kpi-guard task, evaluations and alert rules use. User-plane health is read from UPF PDU sessions: Open5GS 2.8.0 exports the N3 GTP-U packet counters but never increments them.",
   "editable": true,
   "graphTooltip": 1,
   "refresh": "30s",
@@ -521,7 +521,7 @@
     {
       "id": 12,
       "type": "row",
-      "title": "UPF: user plane (N3)",
+      "title": "UPF: user plane (PDU sessions)",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -583,7 +583,7 @@
     {
       "id": 14,
       "type": "timeseries",
-      "title": "N3 GTP-U packets per second",
+      "title": "Registered UEs vs UPF sessions",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -596,7 +596,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "pps",
+          "unit": "short",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
@@ -624,8 +624,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(fivegs_ep_n3_gtp_indatapktn3upf[5m]))",
-          "legendFormat": "in (from gNB)"
+          "expr": "sum(fivegs_amffunction_rm_registeredsubnbr)",
+          "legendFormat": "registered UEs (AMF)"
         },
         {
           "refId": "B",
@@ -633,10 +633,11 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(fivegs_ep_n3_gtp_outdatapktn3upf[5m]))",
-          "legendFormat": "out (to gNB)"
+          "expr": "sum(fivegs_upffunction_upf_sessionnbr)",
+          "legendFormat": "PDU sessions (UPF)"
         }
-      ]
+      ],
+      "description": "Registered UEs with no UPF session for 10m fire the UPFNoUserPlaneTraffic alert."
     }
   ]
 }

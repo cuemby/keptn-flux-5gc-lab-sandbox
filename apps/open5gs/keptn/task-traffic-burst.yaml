@@ -1,5 +1,7 @@
 # Container runtime. Same script as traffic/traffic-pulse.yaml, with a longer
-# ping, run as Keptn post-deployment task (hackathon Use-Case One, step 1).
+# ping and a gNB restart first, run as Keptn post-deployment task (hackathon
+# Use-Case One, step 1). On a fresh install it first waits for UERANSIM, which
+# Flux installs only after Open5GS is Ready (ueransim-gnb dependsOn open5gs).
 apiVersion: lifecycle.keptn.sh/v1
 kind: KeptnTaskDefinition
 metadata:
@@ -7,7 +9,7 @@ metadata:
   namespace: open5gs
   annotations: { kustomize.toolkit.fluxcd.io/substitute: disabled }
 spec:
-  timeout: 5m
+  timeout: 15m                                  # up to 6m of it waiting for UERANSIM on a fresh install
   retries: 0
   ttlSecondsAfterFinished: 600
   serviceAccount: { name: keptn-traffic }       # defined in traffic/traffic-pulse.yaml
@@ -17,6 +19,7 @@ spec:
     env:
       - { name: HOME, value: /tmp }
       - { name: UE_DEPLOYMENT, value: "ueransim-gnb-ues" }
+      - { name: GNB_DEPLOYMENT, value: "ueransim-gnb" }                    # restarted first: see below
       - { name: UE_SELECTOR, value: "app.kubernetes.io/component=ues" }
       - { name: UE_TUN, value: "uesimtun0" }
       - { name: UPF_GW, value: "10.45.0.1" }
@@ -24,9 +27,37 @@ spec:
     args:
       - |
         set -eu
-        kubectl rollout restart "deployment/$UE_DEPLOYMENT"
-        kubectl rollout status "deployment/$UE_DEPLOYMENT" --timeout=120s
-        sleep 15
+        # The first release after a bootstrap starts this task before UERANSIM exists: wait for both
+        # Deployments to be created and available instead of failing the release.
+        for d in "$GNB_DEPLOYMENT" "$UE_DEPLOYMENT"; do
+          n=0
+          until kubectl get "deployment/$d" >/dev/null 2>&1; do
+            n=$((n + 1))
+            [ "$n" -le 72 ] || { echo "deployment/$d not created after 6m"; exit 1; }
+            [ "$n" -gt 1 ] || echo "waiting for deployment/$d (UERANSIM not installed yet)"
+            sleep 5
+          done
+          kubectl rollout status "deployment/$d" --timeout=180s
+        done
+        # UERANSIM 3.2.6 does not redo NG Setup when its AMF association drops (every release
+        # rolls the AMF), so restart the gNB first, then the UEs that attach to it.
+        kubectl rollout restart "deployment/$GNB_DEPLOYMENT"
+        kubectl rollout status "deployment/$GNB_DEPLOYMENT" --timeout=120s
+        sleep 5
+        # Right after a release the SMF may still be re-associating with the new UPF, and a UE whose
+        # PDU session fails does not retry it: wait for the tunnel, restart the UEs again if needed.
+        for attempt in 1 2 3; do
+          kubectl rollout restart "deployment/$UE_DEPLOYMENT"
+          kubectl rollout status "deployment/$UE_DEPLOYMENT" --timeout=120s
+          up=0
+          for _ in $(seq 1 15); do
+            p=$(kubectl get pods -l "$UE_SELECTOR" --field-selector=status.phase=Running -o name | head -n 1)
+            if [ -n "$p" ] && kubectl exec "$p" -- ip link show "$UE_TUN" >/dev/null 2>&1; then up=1; break; fi
+            sleep 2
+          done
+          [ "$up" = 1 ] && break
+          echo "no PDU session on $UE_TUN yet (attempt $attempt)"
+        done
         for p in $(kubectl get pods -l "$UE_SELECTOR" --field-selector=status.phase=Running -o name); do
           kubectl exec "$p" -- ping -I "$UE_TUN" -c 60 -i 0.5 "$UPF_GW" || echo "ping failed on $p"
         done

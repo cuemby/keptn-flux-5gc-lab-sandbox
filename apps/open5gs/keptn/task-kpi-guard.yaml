@@ -1,6 +1,6 @@
 # Deno runtime (ghcr.io/keptn/deno-runtime, set by the Keptn lifecycle
-# operator). Soaks the release, watches registration, PDU and N3 KPIs, and
-# requests a Git rollback (GitHub workflow_dispatch) after two consecutive
+# operator). Waits for registration traffic, soaks the release, watches registration, PDU and
+# UPF session KPIs, and requests a Git rollback (GitHub workflow_dispatch) after two consecutive
 # breaches. Keptn never rolls back by itself; Flux applies the rollback commit.
 apiVersion: lifecycle.keptn.sh/v1
 kind: KeptnTaskDefinition
@@ -9,7 +9,7 @@ metadata:
   namespace: open5gs
   annotations: { kustomize.toolkit.fluxcd.io/substitute: disabled }
 spec:
-  timeout: 15m
+  timeout: 25m                                  # trafficWait + warmup + soak (21m), plus query time
   retries: 0
   ttlSecondsAfterFinished: 600
   serviceAccount: { name: keptn-task-runner }
@@ -18,20 +18,37 @@ spec:
     parameters:
       map:
         prometheusUrl: "http://kube-prometheus-stack-prometheus.observability.svc:9090"
+        # Timing: (1) poll until the AMF sees registration requests in a 2m window, for at most
+        # trafficWaitSeconds. On the first release after a bootstrap UERANSIM does not exist yet
+        # (Flux installs it after Open5GS is Ready). 780s covers traffic-burst's own wait (6m for the
+        # Deployments, then up to 180s for each of the gNB and UE rollouts) plus a scrape and poll
+        # margin. No traffic by then exits 1 as "no traffic": the task fails, no breach is counted
+        # and no rollback is requested. (2) Once traffic is seen, warm up for warmupSeconds: traffic-burst's gNB and UE
+        # restarts and the SMF-UPF re-association (about 2.5 minutes on Kind) fall here, not in the
+        # soak, and the 2m windows then only see the new release. (3) Soak for soakSeconds.
+        trafficWaitSeconds: "780"
+        warmupSeconds: "180"
         soakSeconds: "300"
         pollSeconds: "30"
         minRegSuccess: "0.95"
         minPduSuccess: "0.95"
+        # A ratio below its minimum is a breach only when at least this many requests in the 2m
+        # window failed (requests - successes). With the light profile's 2 UEs a window holds a few
+        # requests, so one registration counted on one side of a window edge, or a counter series
+        # that appears at its first value, reads 0.5; a real fault fails every retry and exceeds it.
+        minFailedRequests: "3"
         rollbackWorkflow: "keptn-rollback.yaml"
         stage: "lab"
     secureParameters:
-      secret: github-dispatch       # key SECURE_DATA: {"owner","repo","token"}
+      secret: github-dispatch       # key SECURE_DATA: {"owner","repo","token"} (+ optional "api")
     inline:
       code: |
         const data = JSON.parse(Deno.env.get("DATA") ?? "{}");
         const secure = JSON.parse(Deno.env.get("SECURE_DATA") ?? "{}");
         const ctx = JSON.parse(Deno.env.get("KEPTN_CONTEXT") ?? "{}");
         const prom = data.prometheusUrl;
+        // GitHub API base; the e2e test points it at a mock through the Secret.
+        const api = String(secure.api ?? "https://api.github.com").replace(/\/+$/, "");
 
         async function query(expr: string): Promise<number> {
           try {
@@ -48,12 +65,29 @@ spec:
         }
 
         const REQ = "sum(increase(fivegs_amffunction_rm_reginitreq[2m]))";
+        const REGOK = "sum(increase(fivegs_amffunction_rm_reginitsucc[2m])) or vector(0)";
         const REG = "sum(increase(fivegs_amffunction_rm_reginitsucc[2m])) / " +
           "clamp_min(sum(increase(fivegs_amffunction_rm_reginitreq[2m])), 1)";
         const PDU = "sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[2m])) / " +
           "clamp_min(sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[2m])), 1)";
-        const N3 = "sum(rate(fivegs_ep_n3_gtp_indatapktn3upf[2m]))";
+        // Not the N3 packet counter: Open5GS 2.8.0 exports fivegs_ep_n3_gtp_indatapktn3upf but
+        // never increments it (stays 0 while UE pings pass), so active UPF sessions stand in.
+        const SESS = "sum(fivegs_upffunction_upf_sessionnbr)";
+        const PDUREQ = "sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[2m]))";
+        const PDUOK = "sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[2m])) or vector(0)";
 
+        const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
+        console.log(`waiting up to ${data.trafficWaitSeconds}s for registration traffic`);
+        const waitDeadline = Date.now() + Number(data.trafficWaitSeconds) * 1000;
+        while (!(await query(REQ) > 0)) {
+          if (Date.now() >= waitDeadline) {
+            console.error("kpi-guard: no registration traffic; check UERANSIM and traffic-pulse");
+            Deno.exit(1);
+          }
+          await sleep(Number(data.pollSeconds));
+        }
+        console.log(`warm-up: waiting ${data.warmupSeconds}s for the new release's traffic`);
+        await sleep(Number(data.warmupSeconds));
         let breaches = 0, samples = 0;
         const deadline = Date.now() + Number(data.soakSeconds) * 1000;
         while (Date.now() < deadline) {
@@ -62,16 +96,27 @@ spec:
             samples++;
             const reg = await query(REG);
             const pdu = await query(PDU);
-            const n3 = await query(N3);
-            console.log(JSON.stringify({ req, reg, pdu, n3 }));
-            // "!(x >= min)" also treats a missing sample or failed query (NaN) as a breach
-            const bad = !(reg >= Number(data.minRegSuccess)) || !(pdu >= Number(data.minPduSuccess)) || !(n3 > 0);
+            const sessions = await query(SESS);
+            const pduReq = await query(PDUREQ);
+            const regFailed = req - await query(REGOK);
+            const pduFailed = pduReq - await query(PDUOK);
+            console.log(JSON.stringify({ req, reg, regFailed, pduReq, pdu, pduFailed, sessions }));
+            // A sample is a breach when registration success is below minRegSuccess, PDU session
+            // success is below minPduSuccess, or the UPF holds no session (a dead user plane). A low
+            // ratio counts only with at least minFailedRequests failed requests in the window (see
+            // the parameter). "!(x >= min)" and "!(failed < n)" also treat a failed query (NaN) as a
+            // breach. The PDU ratio only counts when the SMF saw requests: a fresh SMF's counter
+            // series appears at its first value, so increase() reads 0 for a while.
+            const minFailed = Number(data.minFailedRequests);
+            const regBad = !(reg >= Number(data.minRegSuccess)) && !(regFailed < minFailed);
+            const pduBad = pduReq > 0 && !(pdu >= Number(data.minPduSuccess)) && !(pduFailed < minFailed);
+            const bad = regBad || pduBad || !(sessions > 0);
             breaches = bad ? breaches + 1 : 0;
             if (breaches >= 2) break;
           } else {
             console.log("no registration traffic in window, waiting");
           }
-          await new Promise((r) => setTimeout(r, Number(data.pollSeconds) * 1000));
+          await sleep(Number(data.pollSeconds));
         }
 
         if (samples === 0) {
@@ -81,7 +126,7 @@ spec:
 
         if (breaches >= 2) {
           const res = await fetch(
-            `https://api.github.com/repos/${secure.owner}/${secure.repo}/actions/workflows/${data.rollbackWorkflow}/dispatches`,
+            `${api}/repos/${secure.owner}/${secure.repo}/actions/workflows/${data.rollbackWorkflow}/dispatches`,
             {
               method: "POST",
               headers: {
@@ -92,7 +137,7 @@ spec:
               body: JSON.stringify({ ref: "main", inputs: {
                 stage: data.stage,
                 appVersion: String(ctx.appVersion ?? ""),
-                reason: "kpi-guard breach: registration, PDU or N3 below threshold",
+                reason: "kpi-guard breach: registration, PDU or UPF sessions below threshold",
                 source: "keptn",
               } }),
               signal: AbortSignal.timeout(10_000),

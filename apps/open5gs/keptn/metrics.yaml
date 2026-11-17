@@ -13,9 +13,14 @@ kind: KeptnMetric
 metadata: { name: amf-reg-success-ratio, namespace: open5gs }
 spec:
   provider: { name: prometheus }
+  # Success ratio over 5m, read as 1 while fewer than 3 requests failed in the window: the same
+  # rule as kpi-guard's minFailedRequests. With the lab's 2 UEs a window holds a handful of
+  # requests, and traffic-pulse restarting the UEs aborts one or two (stale NG context), which
+  # alone read 0.57-0.75 on the full profile and on Cilium. A real fault fails every retry.
   query: >-
-    sum(increase(fivegs_amffunction_rm_reginitsucc[5m]))
-    / clamp_min(sum(increase(fivegs_amffunction_rm_reginitreq[5m])), 1)
+    ((sum(increase(fivegs_amffunction_rm_reginitsucc[5m])) or vector(0)) / clamp_min(sum(increase(fivegs_amffunction_rm_reginitreq[5m])), 1))
+    and on() (sum(increase(fivegs_amffunction_rm_reginitreq[5m])) - (sum(increase(fivegs_amffunction_rm_reginitsucc[5m])) or vector(0)) >= 3)
+    or on() vector(1)
   fetchIntervalSeconds: 15
 ---
 apiVersion: metrics.keptn.sh/v1
@@ -23,9 +28,14 @@ kind: KeptnMetric
 metadata: { name: smf-pdu-success-ratio, namespace: open5gs }
 spec:
   provider: { name: prometheus }
+  # Success ratio over 5m, read as 1 while fewer than 3 requests failed in the window: the same
+  # rule as kpi-guard's minFailedRequests. With the lab's 2 UEs a window holds a handful of
+  # requests, and traffic-pulse restarting the UEs aborts one or two (stale NG context), which
+  # alone read 0.57-0.75 on the full profile and on Cilium. A real fault fails every retry.
   query: >-
-    sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[5m]))
-    / clamp_min(sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[5m])), 1)
+    ((sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[5m])) or vector(0)) / clamp_min(sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[5m])), 1))
+    and on() (sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[5m])) - (sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[5m])) or vector(0)) >= 3)
+    or on() vector(1)
   fetchIntervalSeconds: 15
 ---
 apiVersion: metrics.keptn.sh/v1
@@ -34,12 +44,4 @@ metadata: { name: upf-sessions, namespace: open5gs }
 spec:
   provider: { name: prometheus }
   query: "sum(fivegs_upffunction_upf_sessionnbr)"
-  fetchIntervalSeconds: 15
----
-apiVersion: metrics.keptn.sh/v1
-kind: KeptnMetric
-metadata: { name: upf-n3-in-pkt-rate, namespace: open5gs }
-spec:
-  provider: { name: prometheus }
-  query: "sum(rate(fivegs_ep_n3_gtp_indatapktn3upf[5m]))"
   fetchIntervalSeconds: 15

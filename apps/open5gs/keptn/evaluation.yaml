@@ -7,4 +7,5 @@ spec:
     - { keptnMetricRef: { name: smf-pdu-success-ratio, namespace: open5gs }, evaluationTarget: ">0.95" }
     - { keptnMetricRef: { name: amf-registered-subscribers, namespace: open5gs }, evaluationTarget: ">0" }
     - { keptnMetricRef: { name: upf-sessions, namespace: open5gs }, evaluationTarget: ">0" }
-    - { keptnMetricRef: { name: upf-n3-in-pkt-rate, namespace: open5gs }, evaluationTarget: ">0" }
+    # upf-sessions stands in for user-plane traffic: Open5GS 2.8.0 exports the N3 packet counter
+    # (fivegs_ep_n3_gtp_indatapktn3upf) but never increments it, so a ">0" on it fails every release.

@@ -7,7 +7,7 @@ metadata:
   namespace: open5gs
   annotations: { kustomize.toolkit.fluxcd.io/substitute: disabled }
 spec:
-  timeout: 15m
+  timeout: 25m                                  # trafficWait + warmup + soak (21m), plus query time
   retries: 0
   ttlSecondsAfterFinished: 600
   serviceAccount: { name: keptn-task-runner }
@@ -16,14 +16,20 @@ spec:
     parameters:
       map:
         prometheusUrl: "http://kube-prometheus-stack-prometheus.observability.svc:9090"
+        # Wait for registration traffic, then warm up, then soak (see task-kpi-guard.yaml).
+        trafficWaitSeconds: "780"
+        warmupSeconds: "180"
         soakSeconds: "300"
         pollSeconds: "30"
         minRegSuccess: "0.95"
         minPduSuccess: "0.95"
+        # A low ratio is a breach only with at least this many failed requests in the 2m window
+        # (see task-kpi-guard.yaml).
+        minFailedRequests: "3"
         rollbackWorkflow: "keptn-rollback.yaml"
         stage: "lab"
     secureParameters:
-      secret: github-dispatch       # key SECURE_DATA: {"owner","repo","token"}
+      secret: github-dispatch       # key SECURE_DATA: {"owner","repo","token"} (+ optional "api")
     inline:
       code: |
         import json, math, os, sys, time, urllib.error, urllib.parse, urllib.request
@@ -32,6 +38,8 @@ spec:
         secure = json.loads(os.environ.get("SECURE_DATA", "{}"))
         ctx = json.loads(os.environ.get("KEPTN_CONTEXT", "{}"))
         prom = data["prometheusUrl"]
+        # GitHub API base; the e2e test points it at a mock through the Secret.
+        api = str(secure.get("api") or "https://api.github.com").rstrip("/")
 
         def query(expr):
             url = prom + "/api/v1/query?query=" + urllib.parse.quote(expr)
@@ -45,23 +53,43 @@ spec:
                 return math.nan
 
         REQ = "sum(increase(fivegs_amffunction_rm_reginitreq[2m]))"
+        REGOK = "sum(increase(fivegs_amffunction_rm_reginitsucc[2m])) or vector(0)"
         REG = ("sum(increase(fivegs_amffunction_rm_reginitsucc[2m])) / "
                "clamp_min(sum(increase(fivegs_amffunction_rm_reginitreq[2m])), 1)")
         PDU = ("sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[2m])) / "
                "clamp_min(sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[2m])), 1)")
-        N3 = "sum(rate(fivegs_ep_n3_gtp_indatapktn3upf[2m]))"
+        # Not the N3 packet counter: Open5GS 2.8.0 never increments it; see task-kpi-guard.yaml.
+        SESS = "sum(fivegs_upffunction_upf_sessionnbr)"
+        PDUREQ = "sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[2m]))"
+        PDUOK = "sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[2m])) or vector(0)"
 
+        print("waiting up to {}s for registration traffic".format(data["trafficWaitSeconds"]), flush=True)
+        wait_deadline = time.time() + int(data["trafficWaitSeconds"])
+        while not query(REQ) > 0:
+            if time.time() >= wait_deadline:
+                raise SystemExit("kpi-guard-py: no registration traffic; check UERANSIM and traffic-pulse")
+            time.sleep(int(data["pollSeconds"]))
+        print("warm-up: waiting {}s for the new release's traffic".format(data["warmupSeconds"]), flush=True)
+        time.sleep(int(data["warmupSeconds"]))
         breaches, samples = 0, 0
         deadline = time.time() + int(data["soakSeconds"])
         while time.time() < deadline:
             req = query(REQ)
             if req > 0:
                 samples += 1
-                reg, pdu, n3 = query(REG), query(PDU), query(N3)
-                print(json.dumps({"req": req, "reg": reg, "pdu": pdu, "n3": n3}), flush=True)
-                # "not x >= min" also treats a missing sample or failed query (NaN) as a breach
-                bad = (not reg >= float(data["minRegSuccess"]) or not pdu >= float(data["minPduSuccess"])
-                       or not n3 > 0)
+                reg, pdu, sessions, pdu_req = query(REG), query(PDU), query(SESS), query(PDUREQ)
+                reg_failed, pdu_failed = req - query(REGOK), pdu_req - query(PDUOK)
+                print(json.dumps({"req": req, "reg": reg, "regFailed": reg_failed, "pduReq": pdu_req,
+                                  "pdu": pdu, "pduFailed": pdu_failed, "sessions": sessions}), flush=True)
+                # Same breach rule as task-kpi-guard.yaml: a low ratio counts only with at least
+                # minFailedRequests failed requests in the window; "not x >= min" and
+                # "not failed < n" also treat a failed query (NaN) as a breach; the PDU ratio only
+                # counts when the SMF saw requests.
+                min_failed = float(data["minFailedRequests"])
+                reg_bad = not reg >= float(data["minRegSuccess"]) and not reg_failed < min_failed
+                pdu_bad = (pdu_req > 0 and not pdu >= float(data["minPduSuccess"])
+                           and not pdu_failed < min_failed)
+                bad = reg_bad or pdu_bad or not sessions > 0
                 breaches = breaches + 1 if bad else 0
                 if breaches >= 2:
                     break
@@ -73,12 +101,12 @@ spec:
             raise SystemExit("kpi-guard-py: no traffic during soak; check traffic-pulse")
 
         if breaches >= 2:
-            url = ("https://api.github.com/repos/{owner}/{repo}/actions/workflows/{wf}/dispatches"
-                   .format(owner=secure["owner"], repo=secure["repo"], wf=data["rollbackWorkflow"]))
+            url = ("{api}/repos/{owner}/{repo}/actions/workflows/{wf}/dispatches"
+                   .format(api=api, owner=secure["owner"], repo=secure["repo"], wf=data["rollbackWorkflow"]))
             payload = json.dumps({"ref": "main", "inputs": {
                 "stage": data["stage"],
                 "appVersion": str(ctx.get("appVersion", "")),
-                "reason": "kpi-guard breach: registration, PDU or N3 below threshold",
+                "reason": "kpi-guard breach: registration, PDU or UPF sessions below threshold",
                 "source": "keptn"}}).encode()
             req = urllib.request.Request(url, data=payload, method="POST", headers={
                 "Authorization": "Bearer " + secure["token"],

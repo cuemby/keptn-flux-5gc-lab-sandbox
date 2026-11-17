@@ -1,0 +1,16 @@
+# Pinned toolchain for the lab, the checks and the e2e test. `mise install` in the repo root
+# installs exactly these versions; CI (.github/workflows/e2e.yaml) uses the same file.
+# Keep kustomize, kubeconform, yq, actionlint and gitleaks in sync with the Makefile versions
+# (scripts/install-tools.sh), and flux2 with FLUX_VERSION in the Makefile and scripts/bootstrap.sh.
+[tools]
+kind = "0.33.0"
+flux2 = "2.10.0"
+kubectl = "1.37.2"
+helm = "4.3.2"
+kustomize = "5.8.3"
+kubeconform = "0.8.0"
+yq = "4.54.3"
+jq = "1.8.1"
+shellcheck = "0.11.0"
+actionlint = "1.7.12"
+gitleaks = "8.30.1"

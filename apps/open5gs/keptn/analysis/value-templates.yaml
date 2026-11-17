@@ -5,22 +5,33 @@ kind: AnalysisValueTemplate
 metadata: { name: amf-reg-success, namespace: open5gs }
 spec:
   provider: { name: prometheus }
+  # Read as 1 while fewer than 3 requests failed in the window (as kpi-guard's
+  # minFailedRequests and the KeptnMetrics in ../metrics.yaml).
   query: >-
-    sum(increase(fivegs_amffunction_rm_reginitsucc[{{.window}}]))
-    / clamp_min(sum(increase(fivegs_amffunction_rm_reginitreq[{{.window}}])), 1)
+    ((sum(increase(fivegs_amffunction_rm_reginitsucc[{{.window}}])) or vector(0)) / clamp_min(sum(increase(fivegs_amffunction_rm_reginitreq[{{.window}}])), 1))
+    and on() (sum(increase(fivegs_amffunction_rm_reginitreq[{{.window}}])) - (sum(increase(fivegs_amffunction_rm_reginitsucc[{{.window}}])) or vector(0)) >= 3)
+    or on() vector(1)
 ---
 apiVersion: metrics.keptn.sh/v1
 kind: AnalysisValueTemplate
 metadata: { name: smf-pdu-success, namespace: open5gs }
 spec:
   provider: { name: prometheus }
+  # Read as 1 while fewer than 3 requests failed in the window (as kpi-guard's
+  # minFailedRequests and the KeptnMetrics in ../metrics.yaml).
   query: >-
-    sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[{{.window}}]))
-    / clamp_min(sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[{{.window}}])), 1)
+    ((sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[{{.window}}])) or vector(0)) / clamp_min(sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[{{.window}}])), 1))
+    and on() (sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[{{.window}}])) - (sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[{{.window}}])) or vector(0)) >= 3)
+    or on() vector(1)
 ---
 apiVersion: metrics.keptn.sh/v1
 kind: AnalysisValueTemplate
-metadata: { name: upf-n3-rate, namespace: open5gs }
+metadata: { name: upf-sessions, namespace: open5gs }
 spec:
   provider: { name: prometheus }
-  query: "sum(rate(fivegs_ep_n3_gtp_indatapktn3upf[{{.window}}]))"
+  # Median of the UPF's PDU sessions over the window: at least 1 means the UPF held
+  # sessions for at least half the window, which tolerates the short gaps while traffic-pulse
+  # re-registers the UEs every 2m (a full user-plane loss still reads 0). The sum is taken per
+  # step first, so an old UPF pod's series from before a release cannot mask a new UPF with no sessions. Not the N3 packet counter:
+  # Open5GS 2.8.0 exports fivegs_ep_n3_gtp_indatapktn3upf but never increments it.
+  query: "quantile_over_time(0.5, sum(fivegs_upffunction_upf_sessionnbr)[{{.window}}:])"

@@ -1,5 +1,5 @@
 # Fault variant of open5gs-good.yaml, selected by scripts/inject-fault.sh.
-# Identical except for the NSSF slice list (see FAULT below).
+# Identical except for the SMF's UE pool DNN (see FAULT below).
 #
 # Chart defaults from the chart's values-5g.yaml (5G SA, 4G NFs off),
 # the PLMN/slice/subscriber settings from Gradiant's open5gs + UERANSIM
@@ -20,6 +20,9 @@ webui: { enabled: false }   # optional subscriber UI; populate below seeds the U
 
 mongodb:
   enabled: true
+  # The chart's mongo:8.0.34 exits on start on Linux kernels 6.19-7.0.13 (SERVER-121912;
+  # GitHub's ubuntu-latest runners use 7.0.0-azure). MongoDB 7.0 has no such kernel gate.
+  image: { tag: 7.0.48 }
   auth: { enabled: false }
   persistence: { enabled: true, size: 1Gi }
   resources:
@@ -35,8 +38,9 @@ populate:
     - open5gs-dbctl add_ue_with_slice 999700000000002 465B5CE8B199B49FAA5F0A2EE238A6BC E8ED289DEBA952E4283B54E88E6183CA internet 1 111111
   mongodbWait:
     resources:
-      requests: { cpu: 10m, memory: 32Mi }
-      limits: { memory: 128Mi }
+      # mongosh peaks at about 205 MiB (measured); 128Mi was OOMKilled on every start.
+      requests: { cpu: 10m, memory: 64Mi }
+      limits: { memory: 320Mi }
 
 amf:
   metrics: { enabled: true, serviceMonitor: { enabled: true } }
@@ -59,6 +63,13 @@ smf:
   resources: *nf
   config:
     pcrf: { enabled: false }
+    # FAULT: the SMF's UE address pool serves DNN "ims", but the UEs and subscribers use
+    # "internet". NG Setup and registration still succeed (registration ratio stays high), but
+    # every PDU Session Establishment fails, so PDU session success and UPF sessions drop to zero
+    # and kpi-guard requests a rollback. (An NSSF-only slice fault does not work: the live e2e
+    # run showed the Open5GS 2.8.0 AMF selects the SMF without asking the NSSF.)
+    subnetList:
+      - { subnet: 10.45.0.0/16, gateway: 10.45.0.1, dnn: ims }
 upf:
   metrics: { enabled: true, serviceMonitor: { enabled: true } }
   resources: *nf
@@ -67,15 +78,7 @@ nssf:
   resources: *nf
   config:
     nsiList:
-      # FAULT: the NSSF has no network slice instance for the UEs' slice
-      # (SST 1, SD 0x111111). The AMF plmnList is unchanged, so NG Setup and
-      # UE registration still succeed (registration ratio stays high, and
-      # fivegs_amffunction_rm_reginitreq keeps rising). On each PDU Session
-      # Establishment the AMF (SCP mode, no SMF cached after the RELEASE_ID
-      # restart) asks the NSSF for the slice and gets 403 "Cannot find NSI",
-      # so it never reaches the SMF. PDU session success and N3 packet rate
-      # both drop to zero, and kpi-guard requests a rollback.
-      - { uri: "", sst: 2, sd: "0x111111" }
+      - { uri: "", sst: 1, sd: "0x111111" }
 ausf: { resources: *nf }
 bsf: { resources: *nf }
 nrf: { resources: *nf }

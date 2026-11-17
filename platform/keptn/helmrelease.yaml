@@ -30,6 +30,21 @@ spec:
     crds: CreateReplace
   upgrade:
     crds: CreateReplace
+  # Keptn v2 adopts every pod in an enabled namespace that has app.kubernetes.io/name (or a
+  # parent Deployment/StatefulSet/DaemonSet with it): MongoDB, populate, the other NFs, UERANSIM
+  # and alert-relay all became auto-apps, and open5gs-populate joined the "open5gs" app as a
+  # fifth workload. The chart has no setting for this, so the pod webhook only sees pods that
+  # carry the keptn.sh/workload label: the AMF, SMF, NSSF and UPF (apps/open5gs/helmrelease-open5gs.yaml).
+  postRenderers:
+    - kustomize:
+        patches:
+          - target: { kind: MutatingWebhookConfiguration, name: lifecycle-mutating-webhook-configuration }
+            patch: |
+              - op: add
+                path: /webhooks/0/objectSelector
+                value:
+                  matchExpressions:
+                    - { key: keptn.sh/workload, operator: Exists }
   values:
     lifecycleOperator:
       # Runs the promotion tasks of a KeptnAppContext (the "promote" task). Off by default.

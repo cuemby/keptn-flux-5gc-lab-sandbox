@@ -26,9 +26,11 @@ spec:
         const secure = JSON.parse(Deno.env.get("SECURE_DATA") ?? "{}");
         const ctx = JSON.parse(Deno.env.get("KEPTN_CONTEXT") ?? "{}");
         const stage = String(ctx.metadata?.stage ?? "lab");
+        // GitHub API base; the e2e test points it at a mock through the Secret.
+        const api = String(secure.api ?? "https://api.github.com").replace(/\/+$/, "");
 
         const res = await fetch(
-          `https://api.github.com/repos/${secure.owner}/${secure.repo}/actions/workflows/${data.promoteWorkflow}/dispatches`,
+          `${api}/repos/${secure.owner}/${secure.repo}/actions/workflows/${data.promoteWorkflow}/dispatches`,
           {
             method: "POST",
             headers: {

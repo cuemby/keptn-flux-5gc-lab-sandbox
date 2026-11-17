@@ -8,10 +8,13 @@
 # It never deletes files. It then bumps RELEASE_ID and pushes a plain commit to main, so Flux
 # applies the previous configuration and Keptn evaluates it as a new app version.
 #
-# Guards:
-# - A rollback that landed less than 15 minutes ago makes a second request a quiet no-op
-#   (Keptn and Alertmanager can both ask for the same rollback).
-# - If the last release commit is itself an older rollback, the job stops and asks for a human.
+# Guards, when the last release commit is itself a rollback:
+# - A request about the release that rollback replaced, within 15 minutes of it, is a quiet no-op:
+#   Keptn and Alertmanager can both ask for the same rollback, and a kpi-guard Job that restarts
+#   asks again for the same app version.
+# - Otherwise the rollback did not help: the job stops and asks for a human. That is a request
+#   older than 15 minutes, or a Keptn request for another app version than the one the rollback
+#   recorded (the release the rollback itself produced failed too, typically within minutes).
 name: keptn-rollback
 
 on:
@@ -75,7 +78,18 @@ jobs:
           AGE=$(( $(date +%s) - $(git log -1 --format=%ct "$SHA") ))
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           if git log -1 --format=%s "$SHA" | grep -q '\[keptn-rollback\]'; then
-            if [[ "$AGE" -lt 900 ]]; then echo "recent=true" >> "$GITHUB_OUTPUT"; else echo "loop=true" >> "$GITHUB_OUTPUT"; fi
+            # The app version that rollback replaced, as its commit body records it ("unknown"
+            # for an Alertmanager request); compared in the same sanitized form.
+            ROLLED_BACK=$(git log -1 --format=%b "$SHA" | sed -nE 's/^Failed app version: (.*)\. New RELEASE_ID: .*/\1/p' | head -n 1)
+            SAFE_VERSION=$(printf '%s' "$APP_VERSION" | tr -cd '[:alnum:]._-' | cut -c1-64)
+            if [[ "$AGE" -ge 900 ]]; then
+              echo "loop=true" >> "$GITHUB_OUTPUT"
+            elif [[ "$SOURCE" == keptn && -n "$SAFE_VERSION" && "$SAFE_VERSION" != "$ROLLED_BACK" ]]; then
+              echo "::notice::Rollback ${SHA:0:12} replaced app version ${ROLLED_BACK:-unknown}; Keptn now reports $SAFE_VERSION failing too."
+              echo "loop=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "recent=true" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Recent rollback already in flight

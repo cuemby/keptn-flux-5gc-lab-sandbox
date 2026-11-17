@@ -1,6 +1,8 @@
 # UERANSIM gNB + UEs (Gradiant chart ueransim-gnb 0.2.6, UERANSIM 3.2.6).
 # Renders Deployments ueransim-gnb and ueransim-gnb-ues; UE pods carry
-# app.kubernetes.io/component=ues.
+# app.kubernetes.io/component=ues. Not Keptn workloads: Keptn's pod webhook only selects pods
+# with the keptn.sh/workload label (platform/keptn/helmrelease.yaml), so traffic restarts never
+# create Keptn versions or scheduling gates.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: { name: ueransim-gnb, namespace: open5gs }

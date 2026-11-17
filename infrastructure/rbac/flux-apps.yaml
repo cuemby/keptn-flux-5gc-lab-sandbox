@@ -45,6 +45,13 @@ rules:
   - apiGroups: ["monitoring.coreos.com"]
     resources: ["servicemonitors", "podmonitors", "prometheusrules"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The apps Kustomization creates the keptn-traffic Role and its RoleBinding in one apply.
+  # Without "bind", the API server's escalation check looks the Role up during Flux's dry-run,
+  # before it exists, and the whole apply fails with 'RoleBinding/open5gs/keptn-traffic not found'.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles"]
+    resourceNames: ["keptn-traffic"]
+    verbs: ["bind"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

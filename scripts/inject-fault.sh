@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Scenario 2: ship a bad Open5GS config (NSSF has no slice instance for the UEs' SST 1).
+# Scenario 2: ship a bad Open5GS config (the SMF serves DNN "ims" while the UEs use "internet").
 # Points the open5gs-values ConfigMap at values/open5gs-fault-slice.yaml, bumps RELEASE_ID, then
 # commits and pushes so Flux applies it and Keptn evaluates the new release.
 # Usage: scripts/inject-fault.sh [stage]   (default: lab). Set NO_PUSH=1 to commit only.

@@ -8,30 +8,36 @@ spec:
   groups:
     - name: open5gs
       rules:
+        # The success-ratio rules need at least 3 failed requests in the window (as kpi-guard's
+        # minFailedRequests): traffic-pulse restarting the lab's 2 UEs aborts one or two
+        # registrations, which alone push a ratio over a handful of requests below 0.9.
         - alert: AMFRegistrationSuccessLow
           expr: |
-            (sum(increase(fivegs_amffunction_rm_reginitsucc[5m]))
-              / clamp_min(sum(increase(fivegs_amffunction_rm_reginitreq[5m])), 1)) < 0.95
-            and sum(increase(fivegs_amffunction_rm_reginitreq[5m])) > 0
+            ((sum(increase(fivegs_amffunction_rm_reginitsucc[5m])) or vector(0)) / clamp_min(sum(increase(fivegs_amffunction_rm_reginitreq[5m])), 1)) < 0.95
+            and (sum(increase(fivegs_amffunction_rm_reginitreq[5m])) - (sum(increase(fivegs_amffunction_rm_reginitsucc[5m])) or vector(0))) >= 3
           for: 5m
           labels: { severity: warning }
           annotations:
             summary: "AMF initial registration success below 95% over 5m"
         - alert: SMFPduSessionSuccessLow
           expr: |
-            (sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[5m]))
-              / clamp_min(sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[5m])), 1)) < 0.95
-            and sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[5m])) > 0
+            ((sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[5m])) or vector(0)) / clamp_min(sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[5m])), 1)) < 0.95
+            and (sum(increase(fivegs_smffunction_sm_pdusessioncreationreq[5m])) - (sum(increase(fivegs_smffunction_sm_pdusessioncreationsucc[5m])) or vector(0))) >= 3
           for: 5m
           labels: { severity: warning }
           annotations:
             summary: "SMF PDU session creation success below 95% over 5m"
+        # UEs are registered but the UPF holds no PDU session: the user plane is down. Not the N3
+        # GTP-U packet counter (fivegs_ep_n3_gtp_indatapktn3upf): Open5GS 2.8.0 exports it but never
+        # increments it, so it read 0 on a healthy lab.
         - alert: UPFNoUserPlaneTraffic
-          expr: sum(fivegs_upffunction_upf_sessionnbr) > 0 and sum(rate(fivegs_ep_n3_gtp_indatapktn3upf[5m])) == 0
+          expr: |
+            sum(fivegs_amffunction_rm_registeredsubnbr) > 0
+            and (sum(fivegs_upffunction_upf_sessionnbr) or vector(0)) == 0
           for: 10m
           labels: { severity: warning }
           annotations:
-            summary: "UPF has PDU sessions but no N3 user-plane packets for 10m"
+            summary: "UEs registered but the UPF has no PDU sessions for 10m"
     - name: mission-control
       rules:
         # Fires only after the Keptn soak window has passed (for: 15m > 5m soak), that is,
@@ -39,9 +45,8 @@ spec:
         # action="rollback" to alert-relay, which requests the same Git rollback as Keptn.
         - alert: Open5GSDegradedAfterRelease
           expr: |
-            (sum(increase(fivegs_amffunction_rm_reginitsucc[10m]))
-              / clamp_min(sum(increase(fivegs_amffunction_rm_reginitreq[10m])), 1)) < 0.90
-            and sum(increase(fivegs_amffunction_rm_reginitreq[10m])) > 0
+            ((sum(increase(fivegs_amffunction_rm_reginitsucc[10m])) or vector(0)) / clamp_min(sum(increase(fivegs_amffunction_rm_reginitreq[10m])), 1)) < 0.90
+            and (sum(increase(fivegs_amffunction_rm_reginitreq[10m])) - (sum(increase(fivegs_amffunction_rm_reginitsucc[10m])) or vector(0))) >= 3
           for: 15m
           labels: { severity: critical, action: rollback }
           annotations:
