@@ -21,4 +21,4 @@ spec:
     namespace: flux-system
   postBuild:
     substitute:
-      RELEASE_ID: "lab-20261117-151434"   # rewritten by scripts/bump-release.sh
+      RELEASE_ID: "lab-20261117-031257"   # rewritten by scripts/bump-release.sh
