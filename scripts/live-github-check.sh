@@ -298,6 +298,28 @@ expect_release() {
   echo "$av"
 }
 
+# rollback_alerts [since]: names and states of action=rollback alerts that are pending or firing
+# (only those active since that ISO time, when given), one per line.
+rollback_alerts() {
+  prom_api /api/v1/alerts |
+    jq -r --arg t "${1:-}" '.data.alerts[] | select(.labels.action == "rollback" and (.state == "pending" or .state == "firing") and ($t == "" or .activeAt >= $t)) | "\(.labels.alertname) \(.state)"'
+}
+
+# settle <label>: wait (up to 30 min) until no rollback alert is pending or firing. A fault keeps
+# the alerts' 10-minute windows bad after Keptn rolled it back; the next scenario starts clean.
+settle() {
+  local start=$SECONDS a
+  while (( SECONDS - start < 1800 )); do
+    a="$(rollback_alerts 2>/dev/null)" || a="(Prometheus unreachable)"
+    if [[ -z "$a" ]]; then
+      (( SECONDS - start >= 60 )) && result INFO "$1: waited $(( (SECONDS - start) / 60 )) min for the rollback alerts of the previous scenario to clear"
+      return 0
+    fi
+    sleep 30
+  done
+  result INFO "$1: rollback alerts still active after 30 min: $(tr '\n' ' ' <<<"$a")"
+}
+
 # --- setup ----------------------------------------------------------------------------------------
 setup() {
   local sha type user
@@ -372,6 +394,7 @@ scenario_promote() {
 scenario_rollback() {
   local t rid av logs r subj rid2 av2
   log "rollback (scenario 2): faulty release, real keptn-rollback.yaml dispatch"
+  settle rollback
   pull
   t="$(now_iso)"
   (cd "$CLONE" && NO_PUSH=1 scripts/inject-fault.sh "$STAGE" >/dev/null)
@@ -403,6 +426,7 @@ scenario_rollback() {
 scenario_mission() {
   local rid av t_break fired_after r subj rid2 av2 relay replicas start
   log "mission control (scenario 9): release with a config change, then a manual break outside Git"
+  settle mission
   pull
   # A release that changes a release input (a comment in the good values file), so the rollback
   # has a previous state to restore; a RELEASE_ID-only bump changes no input to roll back.
@@ -422,8 +446,7 @@ scenario_mission() {
   # The alert needs registrations failing for 15 min (for: 15m) on a 10m window.
   fired_after=""
   while (( SECONDS - start < 2400 )); do
-    if prom_api /api/v1/alerts 2>/dev/null |
-      jq -e '.data.alerts[] | select(.labels.alertname == "Open5GSDegradedAfterRelease" and .state == "firing")' >/dev/null; then
+    if rollback_alerts "$t_break" 2>/dev/null | grep -qx 'Open5GSDegradedAfterRelease firing'; then
       fired_after=$(( (SECONDS - start) / 60 ))
       break
     fi
@@ -466,6 +489,7 @@ scenario_mission() {
 scenario_loop_guard() {
   local t rid av r1 first rid2 av2 r steps commits
   log "loop guard (scenario 3): make the good config bad too, then release a fault"
+  settle loop-guard
   pull
   first="$(git -C "$CLONE" rev-parse HEAD)"
   cp "$CLONE/apps/open5gs/values/open5gs-fault-slice.yaml" "$CLONE/apps/open5gs/values/open5gs-good.yaml"

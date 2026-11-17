@@ -15,6 +15,11 @@
 # - Otherwise the rollback did not help: the job stops and asks for a human. That is a request
 #   older than 15 minutes, or a Keptn request for another app version than the one the rollback
 #   recorded (the release the rollback itself produced failed too, typically within minutes).
+# An Alertmanager request about a release commit younger than 15 minutes is a quiet no-op too:
+# Open5GSDegradedAfterRelease fires after 15 minutes of degradation, so that degradation began
+# before the release reached the cluster and the release did not cause it. Typically the alert's
+# 10-minute window still holds a fault that Keptn already rolled back, and a newer, healthy
+# release must not be reverted for it.
 name: keptn-rollback
 
 on:
@@ -90,14 +95,22 @@ jobs:
             else
               echo "recent=true" >> "$GITHUB_OUTPUT"
             fi
+          elif [[ "$SOURCE" == alertmanager && "$AGE" -lt 900 ]]; then
+            echo "predates=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Recent rollback already in flight
         if: steps.find.outputs.recent == 'true'
         run: echo "::notice::A rollback for $STAGE landed less than 15 min ago; ignoring duplicate request from $SOURCE."
 
+      - name: Degradation predates the release
+        if: steps.find.outputs.predates == 'true'
+        env:
+          SHA: ${{ steps.find.outputs.sha }}
+        run: echo "::notice::Release commit ${SHA:0:12} is less than 15 min old; the alert's 15 min of degradation began before it, so it is not rolled back."
+
       - name: Restore release inputs and bump RELEASE_ID
-        if: steps.find.outputs.recent != 'true' && steps.find.outputs.loop != 'true'
+        if: steps.find.outputs.recent != 'true' && steps.find.outputs.loop != 'true' && steps.find.outputs.predates != 'true'
         env:
           SHA: ${{ steps.find.outputs.sha }}
         run: |
